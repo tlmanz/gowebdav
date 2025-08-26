@@ -16,11 +16,19 @@ import (
 	d "github.com/studio-b12/gowebdav"
 )
 
+var (
+	cliRoot       string
+	cliChunkSize  int64
+	cliUploadsURL string
+)
+
 func main() {
 	root := flag.String("root", os.Getenv("ROOT"), "WebDAV Endpoint [ENV.ROOT]")
 	user := flag.String("user", os.Getenv("USER"), "User [ENV.USER]")
 	password := flag.String("pw", os.Getenv("PASSWORD"), "Password [ENV.PASSWORD]")
 	netrc := flag.String("netrc-file", filepath.Join(getHome(), ".netrc"), "read login from netrc file")
+	chunkSize := flag.Int64("chunk-size", 0, "Chunk size in bytes for Nextcloud chunked upload (PUTCHUNK)")
+	ncUploadsURL := flag.String("nc-uploads-url", os.Getenv("NC_UPLOADS_URL"), "Absolute uploads URL for Nextcloud chunked upload, e.g. https://host/remote.php/dav/uploads/<user>/ [ENV.NC_UPLOADS_URL]")
 	method := flag.String("X", "", `Method:
 	LS <PATH>
 	STAT <PATH>
@@ -30,6 +38,7 @@ func main() {
 
 	GET <PATH> [<FILE>]
 	PUT <PATH> [<FILE>]
+	PUTCHUNK <PATH> [<FILE>]
 
 	MV <OLD> <NEW>
 	CP <OLD> <NEW>
@@ -37,6 +46,11 @@ func main() {
 	DEL <PATH>
 	`)
 	flag.Parse()
+
+	// record CLI flags for use in command closures
+	cliRoot = *root
+	cliChunkSize = *chunkSize
+	cliUploadsURL = *ncUploadsURL
 
 	if *root == "" {
 		fail("Set WebDAV ROOT")
@@ -119,6 +133,9 @@ func getCmd(method string) func(c *d.Client, p0, p1 string) error {
 
 	case "PUT", "PUSH", "WRITE":
 		return cmdPut
+
+	case "PUTCHUNK", "WRITECHUNK", "NCCHUNK":
+		return func(c *d.Client, p0, p1 string) error { return cmdPutChunk(c, p0, p1, cliUploadsURL, cliChunkSize) }
 
 	default:
 		return func(c *d.Client, p0, p1 string) (err error) {
@@ -217,6 +234,42 @@ func cmdPut(c *d.Client, p0, p1 string) (err error) {
 
 	if err = c.WriteStream(p0, stream, 0644); err == nil {
 		fmt.Println("Put: " + p1 + " -> " + p0)
+	}
+	return
+}
+
+func cmdPutChunk(c *d.Client, p0, p1, uploadsURL string, chunkSize int64) (err error) {
+	if uploadsURL == "" {
+		return errors.New("Nextcloud uploads URL is required (flag -nc-uploads-url or ENV NC_UPLOADS_URL)")
+	}
+	if chunkSize <= 0 {
+		// default 10MB
+		chunkSize = 10 * 1024 * 1024
+	}
+
+	if p1 == "" {
+		p1 = path.Join(".", p0)
+	} else {
+		var fi fs.FileInfo
+		fi, err = c.Stat(p0)
+		if err != nil && !d.IsErrNotFound(err) {
+			return
+		}
+		if !d.IsErrNotFound(err) && fi.IsDir() {
+			p0 = path.Join(p0, p1)
+		}
+	}
+
+	stream, err := getStream(p1)
+	if err != nil {
+		return
+	}
+	defer stream.Close()
+
+	// Make absolute destination URL based on provided root
+	destAbs := d.PathEscape(d.Join(cliRoot, p0))
+	if err = c.WriteStreamNextcloudChunked(uploadsURL, destAbs, stream, chunkSize, 0); err == nil {
+		fmt.Println("PutChunk: " + p1 + " -> " + p0)
 	}
 	return
 }

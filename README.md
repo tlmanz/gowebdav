@@ -19,6 +19,7 @@ Our `gowebdav` library allows to perform following actions on the remote WebDAV 
 * [move file to another location](#move-file-to-another-location)
 * [copy file to another location](#copy-file-to-another-location)
 * [delete file](#delete-file)
+* [Nextcloud chunked upload](#nextcloud-chunked-upload)
 
 It also provides an [authentication API](#type-authenticator) that makes it easy to encapsulate and control complex authentication challenges.
 The default implementation negotiates the algorithm based on the user's preferences and the methods offered by the remote server.
@@ -144,6 +145,34 @@ webdavFilePath := "folder/subfolder/file.txt"
 
 c.Remove(webdavFilePath)
 ```
+
+### Nextcloud chunked upload
+If you target a Nextcloud server and want resilient large uploads, use the chunked upload API described by Nextcloud. This client provides a convenience helper that implements the documented flow (MKCOL upload folder, PUT chunk files, MOVE .file to destination).
+
+Library usage:
+```go
+// Base uploads URL and destination must be absolute URLs pointing to Nextcloud DAV endpoints.
+baseUploadURL := "https://server/remote.php/dav/uploads/<user>/"
+destAbsoluteURL := "https://server/remote.php/dav/files/<user>/path/to/big.bin"
+
+f, _ := os.Open("/path/to/big.bin")
+defer f.Close()
+
+// Upload in 10MB chunks; mtime=0 means keep server time
+if err := c.WriteStreamNextcloudChunked(baseUploadURL, destAbsoluteURL, f, 10*1024*1024, 0); err != nil {
+  // handle error
+}
+```
+
+CLI usage:
+```sh
+# Required: ROOT set to https://server/remote.php/dav
+# Required: NC_UPLOADS_URL set to https://server/remote.php/dav/uploads/<user>/
+gowebdav -X PUTCHUNK /files/<user>/dest/big.bin /local/path/big.bin -chunk-size 10485760
+```
+Notes:
+- Chunk files are named start-end with zero-padding as per the Nextcloud documentation and assembled server-side via MOVE of `/.file`.
+- Requests for chunk endpoints use absolute URLs; authentication is negotiated the same way as for other requests.
 
 ## Links
 

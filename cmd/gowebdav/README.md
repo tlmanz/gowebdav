@@ -17,6 +17,7 @@ It is recommended to set following environment variables to improve your experie
 * `ROOT` is an URL of target WebDAV server (e.g. `https://webdav.mydomain.me/user_root_folder`)
 * `USER` is a login to connect to specified server (e.g. `user`)
 * `PASSWORD` is a password to connect to specified server (e.g. `p@s$w0rD`)
+* `NC_UPLOADS_URL` absolute Nextcloud uploads URL (e.g. `https://server/remote.php/dav/uploads/<user>/`) for PUTCHUNK
 
 In following examples we suppose that:
 * environment variable `ROOT` is set to `https://webdav.mydomain.me/ufolder`
@@ -57,6 +58,13 @@ You may do not specify target local path, in this case file will be downloaded t
 #### Upload file
 ```sh
 gowebdav -X PUT temp/uploaded.txt /tmp/webdav/to_upload.txt
+```
+
+#### Upload file via Nextcloud chunking
+```sh
+# ROOT must be Nextcloud DAV root, e.g. https://server/remote.php/dav
+# NC_UPLOADS_URL must be https://server/remote.php/dav/uploads/<user>/
+gowebdav -X PUTCHUNK /files/<user>/temp/uploaded.bin /tmp/webdav/large.bin -chunk-size 10485760
 ```
 
 #### Move file on the remote server

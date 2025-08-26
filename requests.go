@@ -4,6 +4,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 )
@@ -11,7 +12,18 @@ import (
 func (c *Client) req(method, path string, body io.Reader, intercept func(*http.Request)) (rs *http.Response, err error) {
 	var redo bool
 	var r *http.Request
-	var uri = PathEscape(Join(c.root, path))
+	var uri string
+	var authPath = path
+	// Support absolute URLs: used for Nextcloud chunking endpoints living outside c.root
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		// Parse to extract path for authorizers that include it (e.g., Digest)
+		if u, perr := url.Parse(path); perr == nil {
+			authPath = u.EscapedPath()
+		}
+		uri = path
+	} else {
+		uri = PathEscape(Join(c.root, path))
+	}
 	auth, body := c.auth.NewAuthenticator(body)
 	defer auth.Close()
 
@@ -26,7 +38,7 @@ func (c *Client) req(method, path string, body io.Reader, intercept func(*http.R
 			}
 		}
 
-		if err = auth.Authorize(c.c, r, path); err != nil {
+	if err = auth.Authorize(c.c, r, authPath); err != nil {
 			return
 		}
 

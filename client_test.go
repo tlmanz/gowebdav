@@ -9,7 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
+	pathpkg "path"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -655,5 +658,98 @@ func TestWriteStreamToServerAcquireContentLength(t *testing.T) {
 
 	if !bytes.Equal(lf, lf2) {
 		t.Fatalf("%s largefile.bin doesn't match", t.Name())
+	}
+}
+
+func TestNextcloudChunkedUpload(t *testing.T) {
+	// Simulate minimal Nextcloud chunk API endpoints under /remote.php/dav/uploads/<user>/ and files/<user>/
+	user := "user"
+	mux := http.NewServeMux()
+	fs := webdav.NewMemFS()
+	lcks := webdav.NewMemLS()
+
+	uploads := make(map[string][]byte)
+
+	// Handle MKCOL and PUT under uploads prefix
+	mux.HandleFunc("/remote.php/dav/uploads/", func(w http.ResponseWriter, r *http.Request) {
+		// Path: /remote.php/dav/uploads/<user>/<folder>/[chunk-name or .file]
+		if r.Method == "MKCOL" {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method == http.MethodPut {
+			// store chunk content by request path
+			b, _ := io.ReadAll(r.Body)
+			r.Body.Close()
+			uploads[r.URL.Path] = b
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method == "MOVE" {
+			// Assemble chunks by sorting keys starting with folder path (excluding .file path itself)
+			dest := r.Header.Get("Destination")
+			if dest == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			// gather chunks
+			folder := strings.TrimSuffix(r.URL.Path, "/.file")
+			// concatenate in lexical order
+			var keys []string
+			for k := range uploads {
+				if strings.HasPrefix(k, folder+"/") {
+					keys = append(keys, k)
+				}
+			}
+			sort.Strings(keys)
+			var data []byte
+			for _, k := range keys {
+				data = append(data, uploads[k]...)
+			}
+
+			// write to files area dest path
+			du, _ := neturl.Parse(dest)
+			// map dest into local fs by trimming server origin, assume same server root
+			target := strings.TrimPrefix(du.Path, "/remote.php/dav/files/")
+			ctx := context.Background()
+			if err := fs.Mkdir(ctx, pathpkg.Dir(target), 0755); err != nil && !os.IsExist(err) {
+				t.Fatalf("mkdir: %v", err)
+			}
+			f, err := fs.OpenFile(ctx, target, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			if _, err := f.Write(data); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			f.Close()
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	})
+
+	// Files namespace served by webdav handler for readback
+	mux.Handle("/remote.php/dav/files/", http.StripPrefix("/remote.php/dav/files/", &webdav.Handler{FileSystem: fs, LockSystem: lcks}))
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cli := NewClient(srv.URL+"/remote.php/dav", "", "")
+
+	content := bytes.Repeat([]byte("A"), 2*1024*1024+123) // >2MB to force multiple chunks
+	// Upload via chunked API with 1MB chunks
+	err := cli.WriteStreamNextcloudChunked(srv.URL+"/remote.php/dav/uploads/"+user+"/", srv.URL+"/remote.php/dav/files/"+user+"/chunked.bin", bytes.NewReader(content), 1*1024*1024, 0)
+	if err != nil {
+		t.Fatalf("chunked upload failed: %v", err)
+	}
+
+	// Read back using normal client
+	data, err := cli.Read("/files/" + user + "/chunked.bin")
+	if err != nil {
+		t.Fatalf("read back failed: %v", err)
+	}
+	if !bytes.Equal(data, content) {
+		t.Fatalf("uploaded content mismatch: got %d bytes, want %d", len(data), len(content))
 	}
 }

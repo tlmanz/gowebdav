@@ -19,3 +19,5 @@
 *.out
 
 .vscode/
+
+go.sum
