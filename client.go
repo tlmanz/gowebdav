@@ -18,6 +18,7 @@ const XInhibitRedirect = "X-Gowebdav-Inhibit-Redirect"
 // Client defines our structure
 type Client struct {
 	root        string
+	user        string
 	headers     http.Header
 	interceptor func(method string, rq *http.Request)
 	c           *http.Client
@@ -26,7 +27,9 @@ type Client struct {
 
 // NewClient creates a new instance of client
 func NewClient(uri, user, pw string) *Client {
-	return NewAuthClient(uri, NewAutoAuth(user, pw))
+	cli := NewAuthClient(uri, NewAutoAuth(user, pw))
+	cli.user = user
+	return cli
 }
 
 // NewAuthClient creates a new client instance with a custom Authorizer

@@ -62,9 +62,14 @@ gowebdav -X PUT temp/uploaded.txt /tmp/webdav/to_upload.txt
 
 #### Upload file via Nextcloud chunking
 ```sh
-# Auto mode: user is taken from the destination path
+# Auto mode with full DAV path: user is taken from the destination path
 export ROOT="https://server/remote.php/dav"
 gowebdav -X PUTCHUNK /files/<user>/temp/uploaded.bin /tmp/webdav/large.bin -chunk-size 10485760
+
+# Auto mode with relative path: user is taken from USER environment variable
+export ROOT="https://server/remote.php/dav"
+export USER="<user>"
+gowebdav -X PUTCHUNK temp/uploaded.bin /tmp/webdav/large.bin -chunk-size 10485760
 
 # Explicit mode: provide uploads URL explicitly
 export NC_UPLOADS_URL="https://server/remote.php/dav/uploads/<user>/"

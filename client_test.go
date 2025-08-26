@@ -712,8 +712,20 @@ func TestNextcloudChunkedUpload(t *testing.T) {
 			// map dest into local fs by trimming server origin, assume same server root
 			target := strings.TrimPrefix(du.Path, "/remote.php/dav/files/")
 			ctx := context.Background()
-			if err := fs.Mkdir(ctx, pathpkg.Dir(target), 0755); err != nil && !os.IsExist(err) {
-				t.Fatalf("mkdir: %v", err)
+			// Ensure parent directories exist (MemFS doesn't support MkdirAll)
+			dir := pathpkg.Dir(target)
+			if dir != "." && dir != "/" && dir != "" {
+				parts := strings.Split(dir, "/")
+				acc := ""
+				for _, part := range parts {
+					if part == "" {
+						continue
+					}
+					acc = pathpkg.Join(acc, part)
+					if err := fs.Mkdir(ctx, acc, 0755); err != nil && !os.IsExist(err) {
+						t.Fatalf("mkdir: %v", err)
+					}
+				}
 			}
 			f, err := fs.OpenFile(ctx, target, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
 			if err != nil {
@@ -797,8 +809,19 @@ func TestNextcloudChunkedUploadAuto(t *testing.T) {
 			du, _ := neturl.Parse(dest)
 			target := strings.TrimPrefix(du.Path, "/remote.php/dav/files/")
 			ctx := context.Background()
-			if err := fs.Mkdir(ctx, pathpkg.Dir(target), 0755); err != nil && !os.IsExist(err) {
-				t.Fatalf("mkdir: %v", err)
+			dir := pathpkg.Dir(target)
+			if dir != "." && dir != "/" && dir != "" {
+				parts := strings.Split(dir, "/")
+				acc := ""
+				for _, part := range parts {
+					if part == "" {
+						continue
+					}
+					acc = pathpkg.Join(acc, part)
+					if err := fs.Mkdir(ctx, acc, 0755); err != nil && !os.IsExist(err) {
+						t.Fatalf("mkdir: %v", err)
+					}
+				}
 			}
 			f, err := fs.OpenFile(ctx, target, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
 			if err != nil {
@@ -831,6 +854,100 @@ func TestNextcloudChunkedUploadAuto(t *testing.T) {
 	data, err := cli.Read(dest)
 	if err != nil {
 		t.Fatalf("read back auto failed: %v", err)
+	}
+	if !bytes.Equal(data, content) {
+		t.Fatalf("uploaded content mismatch: got %d bytes, want %d", len(data), len(content))
+	}
+}
+
+func TestNextcloudChunkedUploadAutoRelative(t *testing.T) {
+	user := "user"
+	mux := http.NewServeMux()
+	fs := webdav.NewMemFS()
+	lcks := webdav.NewMemLS()
+
+	uploads := make(map[string][]byte)
+
+	mux.HandleFunc("/remote.php/dav/uploads/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method == http.MethodPut {
+			b, _ := io.ReadAll(r.Body)
+			r.Body.Close()
+			uploads[r.URL.Path] = b
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method == "MOVE" {
+			dest := r.Header.Get("Destination")
+			du, _ := neturl.Parse(dest)
+			target := strings.TrimPrefix(du.Path, "/remote.php/dav/files/")
+			var keys []string
+			folder := strings.TrimSuffix(r.URL.Path, "/.file")
+			for k := range uploads {
+				if strings.HasPrefix(k, folder+"/") {
+					keys = append(keys, k)
+				}
+			}
+			sort.Strings(keys)
+			var data []byte
+			for _, k := range keys {
+				data = append(data, uploads[k]...)
+			}
+			ctx := context.Background()
+			// Ensure parent directories exist recursively (MemFS doesn't support MkdirAll)
+			dir := pathpkg.Dir(target)
+			if dir != "." && dir != "/" && dir != "" {
+				parts := strings.Split(dir, "/")
+				acc := ""
+				for _, part := range parts {
+					if part == "" {
+						continue
+					}
+					if acc == "" {
+						acc = part
+					} else {
+						acc = pathpkg.Join(acc, part)
+					}
+					if err := fs.Mkdir(ctx, acc, 0755); err != nil && !os.IsExist(err) {
+						t.Fatalf("mkdir %s: %v", acc, err)
+					}
+				}
+			}
+			f, err := fs.OpenFile(ctx, target, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			if _, err := f.Write(data); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			f.Close()
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	})
+
+	mux.Handle("/remote.php/dav/files/", http.StripPrefix("/remote.php/dav/files/", &webdav.Handler{FileSystem: fs, LockSystem: lcks}))
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cli := NewClient(srv.URL+"/remote.php/dav", user, "")
+
+	content := bytes.Repeat([]byte("C"), 600*1024)
+	// Provide relative destination; auto should use login to build files URL
+	dest := "path/rel_chunked.bin"
+	if err := cli.WriteStreamNextcloudChunkedAuto(dest, bytes.NewReader(content), 256*1024, 0); err != nil {
+		t.Fatalf("chunked auto relative upload failed: %v", err)
+	}
+
+	// Read back from full DAV path
+	data, err := cli.Read("/files/" + user + "/" + dest)
+	if err != nil {
+		t.Fatalf("read back auto relative failed: %v", err)
 	}
 	if !bytes.Equal(data, content) {
 		t.Fatalf("uploaded content mismatch: got %d bytes, want %d", len(data), len(content))

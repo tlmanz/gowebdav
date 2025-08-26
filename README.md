@@ -1,7 +1,11 @@
 # GoWebDAV
 
 [![Unit Tests Status](https://github.com/studio-b12/gowebdav/actions/workflows/tests.yml/badge.svg)](https://github.com/studio-b12/gowebdav/actions/workflows/tests.yml)
-[![Build Artifacts Status](https://github.com/studio-b12/gowebdav/actions/workflows/artifacts.yml/badge.svg)](https://github.com/studio-b12/gowebdav/actions/workflows/artifacts.yml)
+[![Build Artifacts StaNotes:
+- Chunk files are named start-end with zero-padding as per the Nextcloud documentation and assembled server-side via MOVE of `/.file`.
+- Requests for chunk endpoints use absolute URLs; authentication is negotiated the same way as for other requests.
+- Auto mode determines the user from the destination path's `/files/<user>/...` segment, or uses the client's stored username for relative paths.
+- For relative paths, ensure the client was created with `NewClient(root, user, password)` where `user` is provided.(https://github.com/studio-b12/gowebdav/actions/workflows/artifacts.yml/badge.svg)](https://github.com/studio-b12/gowebdav/actions/workflows/artifacts.yml)
 [![GoDoc](https://godoc.org/github.com/studio-b12/gowebdav?status.svg)](https://godoc.org/github.com/studio-b12/gowebdav)
 [![Go Report Card](https://goreportcard.com/badge/github.com/studio-b12/gowebdav)](https://goreportcard.com/report/github.com/studio-b12/gowebdav)
 
@@ -166,15 +170,21 @@ if err := c.WriteStreamNextcloudChunked(baseUploadURL, destAbsoluteURL, f, 10*10
 
 Library usage (auto URLs):
 ```go
-// When your client root is the Nextcloud DAV root, you can pass a destination under /files/<user>/...
+// When your client root is the Nextcloud DAV root and you provide a username
 root := "https://server/remote.php/dav"
 c := gowebdav.NewClient(root, user, password)
 
 f, _ := os.Open("/path/to/big.bin")
 defer f.Close()
 
-// The user is derived from the destination path; the uploads URL is constructed automatically
+// Option 1: Use full DAV path - user is extracted from the path
 dest := "/files/<user>/path/to/big.bin"
+if err := c.WriteStreamNextcloudChunkedAuto(dest, f, 10*1024*1024, 0); err != nil {
+  // handle error
+}
+
+// Option 2: Use relative path - user is taken from client.user (NewClient parameter)
+dest := "path/to/big.bin"  // Constructs /files/<user>/path/to/big.bin automatically
 if err := c.WriteStreamNextcloudChunkedAuto(dest, f, 10*1024*1024, 0); err != nil {
   // handle error
 }
@@ -182,11 +192,16 @@ if err := c.WriteStreamNextcloudChunkedAuto(dest, f, 10*1024*1024, 0); err != ni
 
 CLI usage:
 ```sh
-# Option A (auto): ROOT set to https://server/remote.php/dav
+# Option A (auto with full DAV path): ROOT set to https://server/remote.php/dav
 # Provide a destination under /files/<user>/..., user is extracted to build uploads URL automatically
 gowebdav -X PUTCHUNK /files/<user>/dest/big.bin /local/path/big.bin -chunk-size 10485760
 
-# Option B (explicit): set NC_UPLOADS_URL explicitly
+# Option B (auto with relative path): ROOT set to https://server/remote.php/dav, USER provided
+# Provide relative destination, user is taken from environment/flags to build /files/<user>/... automatically
+export USER="<user>"
+gowebdav -X PUTCHUNK dest/big.bin /local/path/big.bin -chunk-size 10485760
+
+# Option C (explicit): set NC_UPLOADS_URL explicitly
 export NC_UPLOADS_URL="https://server/remote.php/dav/uploads/<user>/"
 gowebdav -X PUTCHUNK /files/<user>/dest/big.bin /local/path/big.bin -chunk-size 10485760
 ```

@@ -9,8 +9,8 @@ import (
 	"net/http"
 	neturl "net/url"
 	pathpkg "path"
-	"strings"
 	"strconv"
+	"strings"
 )
 
 // NextcloudChunkedUpload provides helpers to use Nextcloud's chunking API.
@@ -142,17 +142,30 @@ func (c *Client) WriteStreamNextcloudChunked(baseUploadURL, destAbsoluteURL stri
 
 // WriteStreamNextcloudChunkedAuto constructs the required Nextcloud chunking URLs from the client's root and destination path.
 // dest can be either:
-//  - An absolute URL (https://.../remote.php/dav/files/<user>/path), used as-is
-//  - A DAV path starting with /files/<user>/path, which will be joined with c.root
-//  - A path relative to /files/<user>/ when c.root already contains /files/<user>/
+//   - An absolute URL (https://.../remote.php/dav/files/<user>/path), used as-is
+//   - A DAV path starting with /files/<user>/path, which will be joined with c.root
+//   - A path relative to /files/<user>/ when c.root already contains /files/<user>/
+//
 // The uploads URL will be derived as https://<host>/remote.php/dav/uploads/<user>/ under the same server.
 func (c *Client) WriteStreamNextcloudChunkedAuto(dest string, r io.Reader, chunkSize int64, mtime int64) error {
 	// Build absolute destination URL
 	var destAbs string
 	if strings.HasPrefix(dest, "http://") || strings.HasPrefix(dest, "https://") {
 		destAbs = dest
-	} else {
+	} else if strings.HasPrefix(dest, "/files/") {
+		// DAV path rooted at /files/<user>/...
 		destAbs = PathEscape(Join(c.root, dest))
+	} else {
+		// Relative path: try to resolve using known Nextcloud shape with our login and the current host
+		if ru, err := neturl.Parse(c.root); err == nil && c.user != "" {
+			// Construct absolute URL: scheme://host + /remote.php/dav/files/<login>/ + dest
+			filesRoot := neturl.URL{Scheme: ru.Scheme, Host: ru.Host, Path: "/remote.php/dav/files/" + c.user + "/"}
+			destAbs = filesRoot.Scheme + "://" + filesRoot.Host + PathEscape(Join(filesRoot.Path, dest))
+		}
+		// Fallback: join with root (may fail user detection later, which we handle below)
+		if destAbs == "" {
+			destAbs = PathEscape(Join(c.root, dest))
+		}
 	}
 
 	// Extract user from the destination path (segment after /files/)
@@ -172,22 +185,27 @@ func (c *Client) WriteStreamNextcloudChunkedAuto(dest string, r io.Reader, chunk
 			user = rest
 		}
 	} else {
-		// try root path for user segment
-		ru, err := neturl.Parse(c.root)
-		if err == nil {
-			rp := ru.Path
-			if j := strings.Index(rp, "/files/"); j >= 0 {
-				rest := rp[j+len("/files/"):]
-				if i := strings.Index(rest, "/"); i >= 0 {
-					user = rest[:i]
-				} else {
-					user = rest
+		// fallback to client login if available
+		if c.user != "" {
+			user = c.user
+		} else {
+			// try root path for user segment
+			ru, err := neturl.Parse(c.root)
+			if err == nil {
+				rp := ru.Path
+				if j := strings.Index(rp, "/files/"); j >= 0 {
+					rest := rp[j+len("/files/"):]
+					if i := strings.Index(rest, "/"); i >= 0 {
+						user = rest[:i]
+					} else {
+						user = rest
+					}
 				}
 			}
 		}
 	}
 	if user == "" {
-		return NewPathErrorErr("NextcloudUserDetect", dest, fmt.Errorf("could not determine Nextcloud user from dest or root; provide absolute destination or include /files/<user> in path"))
+		return NewPathErrorErr("NextcloudUserDetect", dest, fmt.Errorf("could not determine Nextcloud user; use a destination under /files/<user>/, set client root to /remote.php/dav/files/<user>/, or provide an absolute destination URL"))
 	}
 
 	// Build base uploads URL under same scheme/host
