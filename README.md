@@ -149,7 +149,7 @@ c.Remove(webdavFilePath)
 ### Nextcloud chunked upload
 If you target a Nextcloud server and want resilient large uploads, use the chunked upload API described by Nextcloud. This client provides a convenience helper that implements the documented flow (MKCOL upload folder, PUT chunk files, MOVE .file to destination).
 
-Library usage:
+Library usage (explicit URLs):
 ```go
 // Base uploads URL and destination must be absolute URLs pointing to Nextcloud DAV endpoints.
 baseUploadURL := "https://server/remote.php/dav/uploads/<user>/"
@@ -160,6 +160,22 @@ defer f.Close()
 
 // Upload in 10MB chunks; mtime=0 means keep server time
 if err := c.WriteStreamNextcloudChunked(baseUploadURL, destAbsoluteURL, f, 10*1024*1024, 0); err != nil {
+  // handle error
+}
+```
+
+Library usage (auto URLs):
+```go
+// When your client root is the Nextcloud DAV root, you can pass a destination under /files/<user>/...
+root := "https://server/remote.php/dav"
+c := gowebdav.NewClient(root, user, password)
+
+f, _ := os.Open("/path/to/big.bin")
+defer f.Close()
+
+// The user is derived from the destination path; the uploads URL is constructed automatically
+dest := "/files/<user>/path/to/big.bin"
+if err := c.WriteStreamNextcloudChunkedAuto(dest, f, 10*1024*1024, 0); err != nil {
   // handle error
 }
 ```
