@@ -753,3 +753,86 @@ func TestNextcloudChunkedUpload(t *testing.T) {
 		t.Fatalf("uploaded content mismatch: got %d bytes, want %d", len(data), len(content))
 	}
 }
+
+func TestNextcloudChunkedUploadAuto(t *testing.T) {
+	// Same simulated Nextcloud endpoints as previous test
+	user := "user"
+	mux := http.NewServeMux()
+	fs := webdav.NewMemFS()
+	lcks := webdav.NewMemLS()
+
+	uploads := make(map[string][]byte)
+
+	mux.HandleFunc("/remote.php/dav/uploads/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "MKCOL" {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method == http.MethodPut {
+			b, _ := io.ReadAll(r.Body)
+			r.Body.Close()
+			uploads[r.URL.Path] = b
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		if r.Method == "MOVE" {
+			dest := r.Header.Get("Destination")
+			if dest == "" {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+			folder := strings.TrimSuffix(r.URL.Path, "/.file")
+			var keys []string
+			for k := range uploads {
+				if strings.HasPrefix(k, folder+"/") {
+					keys = append(keys, k)
+				}
+			}
+			sort.Strings(keys)
+			var data []byte
+			for _, k := range keys {
+				data = append(data, uploads[k]...)
+			}
+
+			du, _ := neturl.Parse(dest)
+			target := strings.TrimPrefix(du.Path, "/remote.php/dav/files/")
+			ctx := context.Background()
+			if err := fs.Mkdir(ctx, pathpkg.Dir(target), 0755); err != nil && !os.IsExist(err) {
+				t.Fatalf("mkdir: %v", err)
+			}
+			f, err := fs.OpenFile(ctx, target, os.O_CREATE|os.O_TRUNC|os.O_RDWR, 0644)
+			if err != nil {
+				t.Fatalf("open: %v", err)
+			}
+			if _, err := f.Write(data); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			f.Close()
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	})
+
+	mux.Handle("/remote.php/dav/files/", http.StripPrefix("/remote.php/dav/files/", &webdav.Handler{FileSystem: fs, LockSystem: lcks}))
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cli := NewClient(srv.URL+"/remote.php/dav", "", "")
+
+	content := bytes.Repeat([]byte("B"), 1024*1024+777) // ~1MB +
+	// Destination as DAV path under /files/<user>/..., auto should derive uploads URL and absolute dest
+	dest := "/files/" + user + "/chunked_auto.bin"
+	if err := cli.WriteStreamNextcloudChunkedAuto(dest, bytes.NewReader(content), 512*1024, 0); err != nil {
+		t.Fatalf("chunked auto upload failed: %v", err)
+	}
+
+	data, err := cli.Read(dest)
+	if err != nil {
+		t.Fatalf("read back auto failed: %v", err)
+	}
+	if !bytes.Equal(data, content) {
+		t.Fatalf("uploaded content mismatch: got %d bytes, want %d", len(data), len(content))
+	}
+}

@@ -239,9 +239,6 @@ func cmdPut(c *d.Client, p0, p1 string) (err error) {
 }
 
 func cmdPutChunk(c *d.Client, p0, p1, uploadsURL string, chunkSize int64) (err error) {
-	if uploadsURL == "" {
-		return errors.New("Nextcloud uploads URL is required (flag -nc-uploads-url or ENV NC_UPLOADS_URL)")
-	}
 	if chunkSize <= 0 {
 		// default 10MB
 		chunkSize = 10 * 1024 * 1024
@@ -266,10 +263,17 @@ func cmdPutChunk(c *d.Client, p0, p1, uploadsURL string, chunkSize int64) (err e
 	}
 	defer stream.Close()
 
-	// Make absolute destination URL based on provided root
-	destAbs := d.PathEscape(d.Join(cliRoot, p0))
-	if err = c.WriteStreamNextcloudChunked(uploadsURL, destAbs, stream, chunkSize, 0); err == nil {
-		fmt.Println("PutChunk: " + p1 + " -> " + p0)
+	if uploadsURL == "" {
+		// Auto-derive URLs from ROOT and the provided remote path
+		if err = c.WriteStreamNextcloudChunkedAuto(p0, stream, chunkSize, 0); err == nil {
+			fmt.Println("PutChunk(auto): " + p1 + " -> " + p0)
+		}
+	} else {
+		// Make absolute destination URL based on provided root
+		destAbs := d.PathEscape(d.Join(cliRoot, p0))
+		if err = c.WriteStreamNextcloudChunked(uploadsURL, destAbs, stream, chunkSize, 0); err == nil {
+			fmt.Println("PutChunk: " + p1 + " -> " + p0)
+		}
 	}
 	return
 }

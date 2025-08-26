@@ -38,7 +38,7 @@ func (c *Client) req(method, path string, body io.Reader, intercept func(*http.R
 			}
 		}
 
-	if err = auth.Authorize(c.c, r, authPath); err != nil {
+		if err = auth.Authorize(c.c, r, authPath); err != nil {
 			return
 		}
 

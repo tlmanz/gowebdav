@@ -166,13 +166,18 @@ if err := c.WriteStreamNextcloudChunked(baseUploadURL, destAbsoluteURL, f, 10*10
 
 CLI usage:
 ```sh
-# Required: ROOT set to https://server/remote.php/dav
-# Required: NC_UPLOADS_URL set to https://server/remote.php/dav/uploads/<user>/
+# Option A (auto): ROOT set to https://server/remote.php/dav
+# Provide a destination under /files/<user>/..., user is extracted to build uploads URL automatically
+gowebdav -X PUTCHUNK /files/<user>/dest/big.bin /local/path/big.bin -chunk-size 10485760
+
+# Option B (explicit): set NC_UPLOADS_URL explicitly
+export NC_UPLOADS_URL="https://server/remote.php/dav/uploads/<user>/"
 gowebdav -X PUTCHUNK /files/<user>/dest/big.bin /local/path/big.bin -chunk-size 10485760
 ```
 Notes:
 - Chunk files are named start-end with zero-padding as per the Nextcloud documentation and assembled server-side via MOVE of `/.file`.
 - Requests for chunk endpoints use absolute URLs; authentication is negotiated the same way as for other requests.
+- Auto mode determines the user from the destination path’s `/files/<user>/...` segment. If it cannot detect the user, set `NC_UPLOADS_URL`.
 
 ## Links
 
